@@ -13,7 +13,6 @@ import random
 from openpyxl.styles import Font, Alignment
 import shutil
 
-# Define base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Define save directories
@@ -30,6 +29,7 @@ os.makedirs(SUB_FILES_DIR, exist_ok=True)
 os.makedirs(RESULT_FILE_DIR, exist_ok=True)
 os.makedirs(EMPTY_REPORT_DIR, exist_ok=True)
 
+
 @dp.message_handler(CommandStart())
 async def bot_start(message: types.Message):
     await message.answer(f"Hello, {message.from_user.full_name}! \n"
@@ -40,7 +40,7 @@ async def bot_start(message: types.Message):
 async def handle_document(message: types.Message, state: FSMContext):
     if message.document and message.document.file_name.endswith('.xlsx'):
 
-        # Download the file
+# Download and save the file
         file_info = await bot.get_file(message.document.file_id)
         file_name = message.document.file_name
         file_path = file_info.file_path
@@ -55,7 +55,8 @@ async def handle_document(message: types.Message, state: FSMContext):
 
         await message.answer("Thank you for sending the Excel file. Processing...")
 
-        # Logic part for edit excel file:
+
+# Logic part for edit excel file:
 
         # Option to suppress specific warnings
         warnings.filterwarnings("ignore", category=UserWarning)
@@ -120,9 +121,8 @@ async def handle_document(message: types.Message, state: FSMContext):
         edited_save_path = os.path.join(EDITED_USER_FILE_DIR, 'editedPBA.xlsx')
         new_book.save(edited_save_path)
 
-        # Send result file and edited
+# Send result file and edited:
         await message.answer("Sending you the edited PBA statistics document...")
-        file_name = 'editedPBA.xlsx'  # Replace with your actual file name
 
         # Check if the file exists
         if os.path.exists(edited_save_path):
@@ -136,7 +136,9 @@ async def handle_document(message: types.Message, state: FSMContext):
 
         await message.answer("Wait a second. 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report' file is under processing...")
 
-        # Logic part for separate editedPBA file
+
+# Logic part for seperate editedPBA file:
+
         book = load_workbook(edited_save_path)
         sheet = book.active
 
@@ -173,40 +175,35 @@ async def handle_document(message: types.Message, state: FSMContext):
             except Exception as e:
                 pass
 
-        # Logic part for make result file and send it to user.
-        # total_power_loss = 0
-        # inexcusable_stoppages_power = 0
-        # inexcusable_stoppages_hours = 0
-        # planned_maintenance_power = 0
-        # planned_maintenance_hours = 0
+
+#Logic part for make result file and send it to user.
+
+        total_power_loss = 0
+        inexcusable_stoppages_power = 0
+        inexcusable_stoppages_hours = 0
+        planned_maintenance_power = 0
+        planned_maintenance_hours = 0
         start_row = 19
 
         # Copy original file to resultFile folder
         file_name = 'original_report.xlsx'
         copied_file_name = 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report.xlsx'
 
-        # Construct the full paths
-        source_path = os.path.join(EMPTY_REPORT_DIR, file_name)
-        destination_path = os.path.join(RESULT_FILE_DIR, copied_file_name)
+        source_folder = os.path.join(EMPTY_REPORT_DIR, file_name)
+        destination_folder = os.path.join(RESULT_FILE_DIR, copied_file_name)
 
         # Ensure the destination folder exists
         os.makedirs(RESULT_FILE_DIR, exist_ok=True)
 
-        # Check if the source file exists
-        if not os.path.exists(source_path):
-            await message.answer(f"The source file {file_name} does not exist in the directory {EMPTY_REPORT_DIR}.")
-            return
-
         # Copy the file
         try:
-            shutil.copy2(source_path, destination_path)
+            shutil.copy2(source_folder, destination_folder)
         except Exception as e:
-            await message.answer(f"Error copying the file: {str(e)}")
-            return
+            pass
 
         # Path to the Daily_report file
         filePath = edited_save_path
-        daily_report_path = destination_path
+        daily_report_path = destination_folder
 
         daily_report_book = openpyxl.load_workbook(daily_report_path)
         daily_report_sheet = daily_report_book.active
@@ -220,160 +217,174 @@ async def handle_document(message: types.Message, state: FSMContext):
             if stoppage_type not in ['Owner or Utility Requested Stop',
                                      'Visit/Inspection/Training Stop by Owner or Utility']:
                 daily_report_sheet[
-                    f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h, {random_number}MWh"
+                    f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h, {random_number} Engineers."
             else:
-                daily_report_sheet[
-                    f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h"
-            format_cell(daily_report_sheet[f'C{row}'], size=10)
+                daily_report_sheet[f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h."
+            format_cell(daily_report_sheet[f'C{row}'], horizontal='left')
 
         def cell_resume_power(row, wtg):
-            daily_report_sheet[f'C{row}'] = f"{wtg} Resume power generation"
-            format_cell(daily_report_sheet[f'C{row}'], size=10)
+            daily_report_sheet[f'C{row}'] = f"{wtg} resume power generation"
+            format_cell(daily_report_sheet[f'C{row}'], horizontal='left')
 
-        def process_excel_data(file_path, daily_report_sheet, start_row):
-            global total_power_loss, inexcusable_stoppages_power, inexcusable_stoppages_hours, planned_maintenance_power, planned_maintenance_hours
+        def process_excel_data(file_path):
+            workbook = openpyxl.load_workbook(file_path)
+            sheet = workbook.active
 
-            total_power_loss = 0
-            inexcusable_stoppages_power = 0
-            inexcusable_stoppages_hours = 0
-            planned_maintenance_power = 0
-            planned_maintenance_hours = 0
+            data = []
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                data.append(row)
 
+            grouped_data = {}
+            for row in data:
+                event_type = row[4]  # Assuming event type is in column E
+                if event_type not in grouped_data:
+                    grouped_data[event_type] = []
+                grouped_data[event_type].append(row[0])  # Assuming identifier is in column A
+
+            output_list = []
+            for event_type, identifiers in grouped_data.items():
+                output_string = f"{', '.join(identifiers)} - {event_type}"
+                output_list.append(output_string)
+
+            return output_list
+
+        # Iterate over each WTG number
+        for wtg in wtg_number:
+            # File path for the current WTG
+            file_path = os.path.join(SUB_FILES_DIR,f'{wtg}_rows.xlsx')
             book = openpyxl.load_workbook(file_path)
             sheet = book.active
 
-            merged_data = {}
-            unique_wtgs = set()
+            start_dates = []
+            end_dates = []
+            stoppage_summary = {}
+            power = 0
 
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                wtg = row[0]
-                stop_start_time = row[1]
-                stoppage_time = row[2]
-                stoppage_type = row[4]
+            # Iterate through the rows to extract the dates and calculate total power loss
+            for row in sheet.iter_rows(min_row=sheet.min_row, values_only=True):  # Start from row 2 to skip the header
+                start_date = row[1] if len(row) > 1 else None  # Column B
+                end_date = row[2] if len(row) > 2 else None  # Column C
+                power = row[7] if len(row) > 7 else None  # Column H
+                stoppage_time = row[3] if len(row) > 3 else 0  # Column D
+                stoppage_type = row[4] if len(row) > 4 else ''  # Column E
 
-                # Check and convert stoppage_time to an integer if it's not already
-                if isinstance(stoppage_time, datetime):
-                    stoppage_time = (stop_start_time - stoppage_time).total_seconds() / 60
-                elif isinstance(stoppage_time, str):
-                    # If stoppage_time is a string, try to convert it to an integer
-                    try:
-                        stoppage_time = int(stoppage_time)
-                    except ValueError:
-                        continue  # Skip this row if conversion fails
+                if isinstance(start_date, datetime):
+                    start_dates.append(start_date)
+                if isinstance(end_date, datetime):
+                    end_dates.append(end_date)
+                if isinstance(power, (int, float)):  # Ensure power_loss is numeric
+                    total_power_loss += power
 
-                if not isinstance(stoppage_time, (int, float)):
-                    continue  # Skip rows with invalid stoppage_time
-
-                if wtg not in merged_data:
-                    merged_data[wtg] = {}
-                if stoppage_type not in merged_data[wtg]:
-                    merged_data[wtg][stoppage_type] = {
-                        'total_stoppage_time': 0,
-                        'first_stop_start_time': stop_start_time,
-                        'total_power_loss': 0
-                    }
-                merged_data[wtg][stoppage_type]['total_stoppage_time'] += stoppage_time
-
-                if stop_start_time < merged_data[wtg][stoppage_type]['first_stop_start_time']:
-                    merged_data[wtg][stoppage_type]['first_stop_start_time'] = stop_start_time
-
-                if stoppage_type != 'Fault stop':
-                    merged_data[wtg][stoppage_type]['total_power_loss'] += round(stoppage_time * 0.75)
-
-                unique_wtgs.add(wtg)
-
-            for wtg in unique_wtgs:
-                if 'Fault stop' in merged_data[wtg]:
-                    fault_stoppage_time = merged_data[wtg]['Fault stop']['total_stoppage_time']
-                    stoppage_types = list(merged_data[wtg].keys())
-                    stoppage_types.remove('Fault stop')
-
-                    if stoppage_types:
-                        max_stoppage_type = max(stoppage_types,
-                                                key=lambda x: merged_data[wtg][x]['total_stoppage_time'])
-                        max_stoppage_time = merged_data[wtg][max_stoppage_type]['total_stoppage_time']
-                        max_stoppage_start_time = merged_data[wtg][max_stoppage_type]['first_stop_start_time']
-
-                        if fault_stoppage_time > max_stoppage_time:
-                            stoppage_time = fault_stoppage_time
-                            stoppage_type = 'Fault stop'
-                            stoppage_start_time = merged_data[wtg]['Fault stop']['first_stop_start_time']
-                        else:
-                            stoppage_time = max_stoppage_time
-                            stoppage_type = max_stoppage_type
-                            stoppage_start_time = max_stoppage_start_time
+                # Accumulate stoppage times by type
+                if isinstance(stoppage_time, (int, float)):
+                    if stoppage_type in stoppage_summary:
+                        stoppage_summary[stoppage_type] += stoppage_time
                     else:
-                        stoppage_time = fault_stoppage_time
-                        stoppage_type = 'Fault stop'
-                        stoppage_start_time = merged_data[wtg]['Fault stop']['first_stop_start_time']
-                else:
-                    stoppage_types = list(merged_data[wtg].keys())
-                    if stoppage_types:
-                        max_stoppage_type = max(stoppage_types,
-                                                key=lambda x: merged_data[wtg][x]['total_stoppage_time'])
-                        stoppage_time = merged_data[wtg][max_stoppage_type]['total_stoppage_time']
-                        stoppage_type = max_stoppage_type
-                        stoppage_start_time = merged_data[wtg][max_stoppage_type]['first_stop_start_time']
+                        stoppage_summary[stoppage_type] = stoppage_time
+
+                # Accumulate stoppage times
+                if isinstance(stoppage_time, (int, float)):
+                    if 'Fault stop' in stoppage_type:
+                        inexcusable_stoppages_hours += stoppage_time
+                        inexcusable_stoppages_power += power
                     else:
-                        # Skip this WTG if there are no stoppage types
-                        continue
+                        planned_maintenance_hours += stoppage_time
+                        planned_maintenance_power += power
 
-                stoppage_hours = round(stoppage_time / 60, 2)
-                row = start_row
+            # Calculate the minimum start date and maximum end date
+            min_start_date = min(start_dates) if start_dates else None
+            max_end_date = max(end_dates) if end_dates else None
 
-                daily_report_sheet[f'B{row}'] = stoppage_start_time.strftime('%Y-%m-%d')
-                format_cell(daily_report_sheet[f'B{row}'], size=10)
+            # Determine the maximum stoppage time excluding 'Fault stop'
+            max_stoppage_type = None
+            max_stoppage_time = 0
+            fault_stop_time = stoppage_summary.get('Fault stop', 0)
 
-                cell_stoppage_type(row, wtg, stoppage_type, stoppage_time)
+            if stoppage_summary:
+                max_stoppage_type = max(
+                    (key for key in stoppage_summary if key != 'Fault stop'),
+                    key=lambda k: stoppage_summary[k],
+                    default=None
+                )
+                if max_stoppage_type:
+                    max_stoppage_time = stoppage_summary[max_stoppage_type]
 
-                row += 1
-                daily_report_sheet[f'B{row}'] = stoppage_start_time.strftime('%H:%M')
-                format_cell(daily_report_sheet[f'B{row}'], size=10)
+            # Write to daily report
+            if min_start_date:
+                daily_report_sheet[f'B{start_row}'] = min_start_date.strftime("%H:%M")
+                format_cell(daily_report_sheet[f'B{start_row}'])
 
-                cell_resume_power(row, wtg)
+            # Include 'Fault stop' and the next most significant stoppage type
+            if fault_stop_time > 0:
+                cell_stoppage_type(start_row, wtg, 'Fault stop', fault_stop_time)
+                start_row += 1
+                if max_stoppage_type:
+                    cell_stoppage_type(start_row, wtg, max_stoppage_type, max_stoppage_time)
+                    start_row += 1
+            elif max_stoppage_type:
+                cell_stoppage_type(start_row, wtg, max_stoppage_type, max_stoppage_time)
+                start_row += 1
 
-                if stoppage_type in [
-                    'Owner or Utility Requested Stop',
-                    'Visit/Inspection/Training Stop by Owner or Utility'
-                ]:
-                    inexcusable_stoppages_power += round(stoppage_time * 0.75)
-                    inexcusable_stoppages_hours += stoppage_hours
-                elif stoppage_type == 'Periodic service stop':
-                    planned_maintenance_power += round(stoppage_time * 0.75)
-                    planned_maintenance_hours += stoppage_hours
-                else:
-                    total_power_loss += round(stoppage_time * 0.75)
-
-                row += 2
-
+            if max_end_date:
+                daily_report_sheet[f'B{start_row}'] = max_end_date.strftime("%H:%M")
+                format_cell(daily_report_sheet[f'B{start_row}'])
+            cell_resume_power(start_row, wtg)
+            start_row += 1
             book.close()
 
-        # Call the function to process Excel data
-        process_excel_data(filePath, daily_report_sheet, start_row)
+        inexcusable_stoppages_hours /= 60
+        planned_maintenance_hours /= 60
 
-        # Save the Daily report
-        daily_report_book.save(daily_report_path)
+        total_power_loss = round(total_power_loss / 1000, 2)
+        inexcusable_stoppages_power = round(inexcusable_stoppages_power / 1000, 2)
+        planned_maintenance_power = round(planned_maintenance_power / 1000, 2)
 
-        # Send result file
-        await message.answer("Sending you the SEPCOIII Zarafshan Wind Power Project O&M Daily Report document...")
+        inexcusable_stoppages_hours = round(inexcusable_stoppages_hours, 1)
+        planned_maintenance_hours = round(planned_maintenance_hours, 1)
 
-        try:
-            # Send the file to the user
-            await bot.send_document(message.chat.id, types.InputFile(daily_report_path))
-        except Exception as e:
-            await message.answer("There was an error sending the file. Please try again later.")
+        results = process_excel_data(filePath)
+        str = ''
+        for result in results:
+            str += f'{result} \n'
 
-        # Reset the state
+        if os.access(daily_report_path, os.W_OK):
+            daily_report_sheet['H17'] = str
+
+            daily_report_sheet['G17'] = total_power_loss
+            if inexcusable_stoppages_power != 0:
+                daily_report_sheet['E17'] = f'{inexcusable_stoppages_hours} / {inexcusable_stoppages_power}'
+            else:
+                daily_report_sheet['E17'] = inexcusable_stoppages_hours
+            daily_report_sheet['F17'] = f'{planned_maintenance_hours} / {planned_maintenance_power}'
+
+            daily_report_book.save(daily_report_path)
+
+        # Send result file and edited
+        await message.answer("Sending you the Daily report document...")
+        file_name = 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report.xlsx'
+        file_path = os.path.join(RESULT_FILE_DIR, file_name)
+
+        # Check if the file exists
+        if os.path.exists(file_path):
+            try:
+                # Send the file to the user
+                await bot.send_document(message.chat.id, types.InputFile(file_path))
+            except Exception as e:
+                await message.answer("There was an error sending the file. Please try again later.")
+        else:
+            await message.answer("The requested file does not exist.")
+
+        # Optionally reset the state after processing
         await state.finish()
 
-        # Clean all project files except original file
+#Clean all project files except original file
 
         # Define the folder containing the files
         Folder_path = [
-            RESULT_FILE_DIR,
             SUB_FILES_DIR,
-            EDITED_USER_FILE_DIR,
-            USER_DOCUMENT_DIR
+            RESULT_FILE_DIR,
+            USER_DOCUMENT_DIR,
+            EDITED_USER_FILE_DIR
         ]
         # Ensure the folder exists
         for folder_path in Folder_path:
@@ -390,6 +401,5 @@ async def handle_document(message: types.Message, state: FSMContext):
                         except Exception as e:
                             pass
 
-        await message.answer("Thank you for your patience. The files have been processed successfully.")
     else:
         await message.answer("Please send a valid Excel file (.xlsx).")
