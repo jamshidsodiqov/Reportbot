@@ -1,46 +1,44 @@
+import openpyxl
 from aiogram import types
 from aiogram.dispatcher.filters.builtin import CommandStart
 from aiogram.dispatcher import FSMContext
 from loader import dp, bot
-from states.userState import fileData
-
-import openpyxl
-from openpyxl import load_workbook, Workbook
-import warnings
-from datetime import datetime
+from datetime import date, timedelta
+from states.userStates import fileData
 import os
-import random
-from openpyxl.styles import Font, Alignment
+import pandas as pd
 import shutil
+import random
+from openpyxl import load_workbook
+from collections import defaultdict
+
+from openpyxl.styles import Side, Border, Alignment, Font, PatternFill
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Define save directories
 USER_DOCUMENT_DIR = os.path.join(BASE_DIR, 'projectFiles', 'userDocument')
 EDITED_USER_FILE_DIR = os.path.join(BASE_DIR, 'projectFiles', 'editedUserFile')
-SUB_FILES_DIR = os.path.join(BASE_DIR, 'projectFiles', 'subFiles')
 RESULT_FILE_DIR = os.path.join(BASE_DIR, 'projectFiles', 'resultFile')
 EMPTY_REPORT_DIR = os.path.join(BASE_DIR, 'projectFiles', 'empty_report')
 
 # Ensure directories exist
 os.makedirs(USER_DOCUMENT_DIR, exist_ok=True)
 os.makedirs(EDITED_USER_FILE_DIR, exist_ok=True)
-os.makedirs(SUB_FILES_DIR, exist_ok=True)
 os.makedirs(RESULT_FILE_DIR, exist_ok=True)
 os.makedirs(EMPTY_REPORT_DIR, exist_ok=True)
-
 
 @dp.message_handler(CommandStart())
 async def bot_start(message: types.Message):
     await message.answer(f"Hello, {message.from_user.full_name}! \n"
                          f"Send me the original PBA statistics in an Excel file.")
-    await fileData.file.set()  # Set the state to indicate we are expecting a file
+    await fileData.excelFile.set()  # Set the state to indicate we are expecting a file
 
-@dp.message_handler(content_types=types.ContentType.DOCUMENT, state=fileData.file)
+@dp.message_handler(content_types=types.ContentType.DOCUMENT, state=fileData.excelFile)
 async def handle_document(message: types.Message, state: FSMContext):
     if message.document and message.document.file_name.endswith('.xlsx'):
 
-# Download and save the file
         file_info = await bot.get_file(message.document.file_id)
         file_name = message.document.file_name
         file_path = file_info.file_path
@@ -55,74 +53,269 @@ async def handle_document(message: types.Message, state: FSMContext):
 
         await message.answer("Thank you for sending the Excel file. Processing...")
 
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
-# Logic part for edit excel file:
+        await state.finish()
 
-        # Option to suppress specific warnings
-        warnings.filterwarnings("ignore", category=UserWarning)
+        dr = pd.read_excel(save_path, header=None)  # Read without assuming any header
+        dr = dr.iloc[2:].reset_index(drop=True)  # Remove first two rows
+        dr.columns = dr.iloc[0]  # Set the first row as header
+        dr = dr.drop(0).reset_index(drop=True)  # Drop the new header row from data
+        dr.to_excel(save_path, index=False)
 
-        # Load the workbook and select the active worksheet
-        book = load_workbook(save_path)
-        sheet = book.active
+        # Edit file using Pandas:
 
-        # Create a new workbook and copy data to ensure styles are consistent
-        new_book = Workbook()
-        new_sheet = new_book.active
+        df_SAVE = pd.read_excel(save_path)
 
-        # Copy the header row to the new sheet
-        header = [cell.value for cell in sheet[1]]
-        new_sheet.append(header)
-
-        # Copy data and apply styles
-        for row in sheet.iter_rows(values_only=True):
-            new_sheet.append(row)
-
-        # Center align all cells
-        for row in new_sheet.iter_rows():
-            for cell in row:
-                cell.alignment = Alignment(horizontal='center')
-
-        # Delete unnecessary columns in reverse order
-        need_delete_columns = [1, 2, 4, 5, 6, 7, 10, 12, 14, 15, 18, 19, 21]
-        need_delete_columns.sort(reverse=True)
-        for col in need_delete_columns:
-            new_sheet.delete_cols(col)
-
-        # Change column width
-        column_widths = {'A': 25, 'B': 25, 'C': 25, 'D': 25, 'E': 45, 'F': 25, 'G': 25, 'H': 25}
-        for col, width in column_widths.items():
-            new_sheet.column_dimensions[col].width = width
-
-        # Define the target values to keep
-        target_values = [
-            'Fault stop',
-            'Tower base stop',
-            'Service mode',
-            'Periodic service stop',
-            'Owner or Utility Requested Stop',
-            'Visit/Inspection/Training Stop by Owner or Utility'
+        cols = [
+            "Device Name",
+            "Starting time",
+            "End Time",
+            "Duration (m)",
+            "Description of running status word",
+            "error code",
+            "Fault description",
+            "Lost power generation (kWh)",
         ]
 
-        # Collect rows to delete
-        rows_to_delete = []
+        new_df = df_SAVE[cols][df_SAVE['Description of running status word'].isin(['Fault stop',
+                                                                                   'Tower base stop',
+                                                                                   'Tower base emergency stop',
+                                                                                   'Service mode',
+                                                                                   'Periodic service stop',
+                                                                                   'HMI stop',
+                                                                                   'Nacelle stop', ])]
 
-        for row in new_sheet.iter_rows(min_row=2, max_col=new_sheet.max_column,
-                                       max_row=new_sheet.max_row):  # Skip header
-            cell = row[4]  # Get the cell in column 'E'
-            if cell.value is None or cell.value not in target_values:
-                rows_to_delete.append(cell.row)
+        # Save the file
+        file_path = os.path.join(EDITED_USER_FILE_DIR, 'new_pba.xlsx')
+        new_df.to_excel(file_path, index=False)
 
-        # Delete rows in reverse order to avoid shifting issues
-        for row in reversed(rows_to_delete):
-            new_sheet.delete_rows(row)
+        # MAKE FINAL REPORT FILE:
 
-        new_sheet.delete_rows(1)
-        # Save the new workbook
-        edited_save_path = os.path.join(EDITED_USER_FILE_DIR, 'editedPBA.xlsx')
-        new_book.save(edited_save_path)
+        # Assuming EDITED_USER_FILE_DIR and BASE_DIR are already defined
+        file_path = os.path.join(EDITED_USER_FILE_DIR, 'new_pba.xlsx')
 
-# Send result file and edited:
-        await message.answer("Sending you the edited PBA statistics document...")
+        # Read the file
+        df = pd.read_excel(file_path)
+
+        df['Starting time'] = df['Starting time'].dt.strftime('%H:%M')
+        df['End Time'] = df['End Time'].dt.strftime('%H:%M')
+        data_list = df.values.tolist()
+
+        # Using a defaultdict to group the data
+        grouped_data = defaultdict(lambda: {
+            'min_time': None,
+            'max_time': None,
+            'descriptions': set(),
+            'total_power': 0,
+            'total_duration': 0,
+            'fault_details': []  # List to store fault number and description
+        })
+
+        # Processing the data
+        for row in data_list:
+            turbine, start_time, end_time, duration, description, fault_num, fault_desc, lost_power = row
+            entry = grouped_data[turbine]
+
+            # Update min and max time
+            entry['min_time'] = min(start_time, entry['min_time']) if entry['min_time'] else start_time
+            entry['max_time'] = max(end_time, entry['max_time']) if entry['max_time'] else end_time
+
+            # Collect unique descriptions
+            entry['descriptions'].add(description)
+
+            # If description is 'Fault stop', append fault details
+            if description == 'Fault stop' and fault_num != '--' and fault_desc != '--':
+                # Append fault details without adding 'Fault stop' again
+                entry['fault_details'].append([fault_num, fault_desc])
+
+            # Sum up power losses and durations
+            entry['total_power'] += lost_power
+            entry['total_duration'] += duration
+
+        # Preparing the result list
+        result = []
+        for turbine, data in grouped_data.items():
+            descriptions = ', '.join(data['descriptions'])
+
+            # If 'Fault stop' is present, include fault details
+            if 'Fault stop' in data['descriptions']:
+                fault_details = data['fault_details'][0] # Assume there's only one fault stop per turbine
+                descriptions = list(data['descriptions'])
+
+                # Split the fault details into separate list entries
+                fault_num = fault_details[0]  # Fault number
+                fault_desc = fault_details[1]  # Fault description
+            else:
+                fault_num = ''
+                fault_desc = ''
+
+            # Create the result entry with separate columns for fault number and fault description
+            result.append([
+                turbine,
+                data['min_time'],
+                data['max_time'],
+                data['total_duration'],  # Include total duration
+                descriptions,
+                fault_num,  # Fault number as a separate entry
+                fault_desc,  # Fault description as a separate entry
+                f"{random.randint(2, 5)} Engineers",  # Random engineer count
+                data['total_power']
+            ])
+
+        result = sorted(result, key=lambda x: x[1])
+        for i in result:
+            if i[8] == 0.0:
+                result.remove(i)
+
+        size = len(result)
+
+        # COPY ORIGINAL EMPTY REPORT FILE TO RESULT FILE FOLDER
+
+        # Assuming BASE_DIR, EMPTY_REPORT_DIR, and RESULT_FILE_DIR are already defined
+        source_file_path = os.path.join(EMPTY_REPORT_DIR, 'original_report.xlsx')
+        destination_file_path = os.path.join(RESULT_FILE_DIR, 'report.xlsx')
+
+        # Copy the file
+        shutil.copy(source_file_path, destination_file_path)
+
+        # Load the existing workbook
+        wb = load_workbook(destination_file_path)
+        sheet = wb.active
+
+        Analys = []
+        for item in result:
+            Analys.append([item[0], item[4]])
+
+        grouped = {}
+        for item in Analys:
+            group = item[1]
+            turbine = item[0]
+            if 'Fault stop' in group:
+                group = 'Fault stop'
+            else:
+                group = 'Service mode'
+            if group not in grouped:
+                grouped[group] = []
+            grouped[group].append(turbine)
+        x = ''
+        for group, turbines in grouped.items():
+            turbines_str = ', '.join(turbines)
+            x += (f"{turbines_str} - {group}\n")
+        sheet['H17'] = x
+
+        sheet.insert_rows(19,19+size*2)
+
+        for row_num in range(19, 19 + size * 2):
+            sheet.row_dimensions[row_num].height = 48
+
+        for i in range(19, 19 + size * 2 + 2):
+            sheet.merge_cells(f'C{i}:L{i}')
+
+        # Define a style for the outside border
+        thin_border = Border(left=Side(style='thin'),
+                             right=Side(style='thin'),
+                             top=Side(style='thin'),
+                             bottom=Side(style='thin'))
+
+        # Apply the border   to the desired range of cells
+        for row in sheet.iter_rows(min_row=19, max_row=19 + size * 2 + 1, min_col=1, max_col=12):
+            for idx, cell in enumerate(row, start=1):  # Use idx to represent the column number (starting from 1)
+                cell.border = thin_border
+
+                cell.font = Font(size=16, name='等线')
+
+                # Apply different alignment based on column index
+                if idx == 1 or idx == 2:  # If it is the first or second column
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    if idx == 1:
+                        cell.font = Font(bold=True, size=16, name='等线')
+                else:
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+
+        # Starting row and column indices
+        start_row = 19
+        time_column = 2  # Column B (Excel index)
+        main_column = 3  # Column C (Excel index)
+        total_lost_power = 0
+        planned_lost_power = 0
+        planned_duration = 0
+        Inexcusable_lost_power = 0
+        Inexcusable_duration = 0
+        num = 1
+
+        sheet[f'A{start_row + size * 2}'] = 'NO.'
+        sheet[f'B{start_row + size * 2}'] = 'Time'
+        sheet[f'C{start_row + size * 2}'] = 'Incidents\Accidents Records'
+
+        sheet[f'A{start_row + size * 2 + 1}'] = '1'
+        sheet[f'B{start_row + size * 2 + 1}'] = '/'
+        sheet[f'C{start_row + size * 2 + 1}'] = '/'
+
+        # Define a blue fill style
+        blue_fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
+
+        target_row = [start_row + size * 2, start_row + size * 2 + 1]
+
+        # Loop through the specific row (target_row) to apply formatting
+        for cell in ['A', 'B', 'C']:
+            for target in target_row:
+                cell_ref = sheet[f'{cell}{target}']
+                cell_ref.font = Font(bold=True, name='Times New Roman', size=18)
+                cell_ref.alignment = Alignment(horizontal='center', vertical='center')
+                if target == start_row + size * 2:
+                    cell_ref.fill = blue_fill
+
+        fault_time = 0
+        fault_power = 0
+
+        for i in range(0, size):
+
+            if result[i][8] != 0.0:
+                sheet[f'A{start_row}'] = num
+                sheet[f'B{start_row}'] = result[i][1]
+                duration = round(result[i][3] / 60, 2)
+                if 'Fault stop' in result[i][4]:
+                    for d in data_list:
+                        if result[i][5] in d:
+                            sheet[f'C{start_row}'] = f"WTG{result[i][0][1:]}, {result[i][4][0]} to {result[i][4][1]}, {result[i][5]}, {result[i][6]}, {duration}h, {result[i][7]}"
+                else:
+                    sheet[f'C{start_row}'] = f"WTG{result[i][0][1:]}, {result[i][4]},{duration}h, {result[i][7]}"
+
+                total_lost_power += result[i][8]
+
+                if 'Fault stop' in result[i][4]:
+                    for d in data_list:
+                        if result[i][5] in d:
+                            Inexcusable_lost_power += d[7]
+                            Inexcusable_duration += round(d[3]/60,2)
+                            fault_time = round(d[3]/60,2)
+                            fault_power = d[7]
+                if 'Service mode' in result[i][4]:
+                    planned_lost_power += result[i][8]
+                    planned_duration += duration
+
+                sheet[f'B{start_row + 1}'] = result[i][2]
+                sheet[f'C{start_row + 1}'] = f"WTG{result[i][0][1:]} resume power generation"
+                sheet[f'A{start_row + 1}'] = num + 1
+                start_row += 2
+                num += 2
+
+        today = date.today()
+
+        sheet['G17'] = round(total_lost_power / 1000, 3)
+        sheet['F17'] = f'{round(planned_duration - fault_time, 2)} / {round((planned_lost_power - fault_power )/ 1000, 3)}'
+        sheet['E17'] = f'{round(Inexcusable_duration, 2)} / {round(Inexcusable_lost_power / 1000, 3)}'
+        sheet['K2'] = today - timedelta(days=1)
+
+        # Save the workbook
+        edited_save_path = os.path.join(RESULT_FILE_DIR,
+                                        f'SEPCOIII Zarafshan Daily report {today - timedelta(days=1)}.xlsx')
+        wb.save(edited_save_path)
+
+        # Send result file and edited:
+        await message.answer(f"Sending SEPCOIII Zarafshan Daily report {today - timedelta(days=1)} document...")
 
         # Check if the file exists
         if os.path.exists(edited_save_path):
@@ -134,254 +327,9 @@ async def handle_document(message: types.Message, state: FSMContext):
         else:
             await message.answer("The requested file does not exist.")
 
-        await message.answer("Wait a second. 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report' file is under processing...")
+        # Clean all project files except original file
 
-
-# Logic part for seperate editedPBA file:
-
-        book = load_workbook(edited_save_path)
-        sheet = book.active
-
-        # Create the directory if it doesn't exist
-        os.makedirs(SUB_FILES_DIR, exist_ok=True)
-
-        # Get the column A values
-        column_values = [cell.value for cell in sheet['A'] if cell.value is not None]
-
-        # Find unique WTG numbers
-        wtg_number = list(set(column_values))
-
-        # Iterate over each unique WTG number
-        for wtg in wtg_number:
-            # Create a new workbook for each WTG number
-            new_book = Workbook()
-            new_sheet = new_book.active
-
-            # Set the column width to 30 for all columns in the new sheet
-            for col in sheet.iter_cols():
-                new_sheet.column_dimensions[col[0].column_letter].width = 25
-
-            # Copy the rows where column A matches the current WTG number
-            for row in sheet.iter_rows(min_row=1):
-                if row[0].value == wtg:
-                    new_sheet.append([cell.value for cell in row])
-
-            # Save the new workbook
-            file_path = os.path.join(SUB_FILES_DIR, f'{wtg}_rows.xlsx')
-
-            try:
-                # Save the new workbook
-                new_book.save(file_path)
-            except Exception as e:
-                pass
-
-
-#Logic part for make result file and send it to user.
-
-        total_power_loss = 0
-        inexcusable_stoppages_power = 0
-        inexcusable_stoppages_hours = 0
-        planned_maintenance_power = 0
-        planned_maintenance_hours = 0
-        start_row = 19
-
-        # Copy original file to resultFile folder
-        file_name = 'original_report.xlsx'
-        copied_file_name = 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report.xlsx'
-
-        source_folder = os.path.join(EMPTY_REPORT_DIR, file_name)
-        destination_folder = os.path.join(RESULT_FILE_DIR, copied_file_name)
-
-        # Ensure the destination folder exists
-        os.makedirs(RESULT_FILE_DIR, exist_ok=True)
-
-        # Copy the file
-        try:
-            shutil.copy2(source_folder, destination_folder)
-        except Exception as e:
-            pass
-
-        # Path to the Daily_report file
-        filePath = edited_save_path
-        daily_report_path = destination_folder
-
-        daily_report_book = openpyxl.load_workbook(daily_report_path)
-        daily_report_sheet = daily_report_book.active
-
-        def format_cell(cell, bold=False, size=12, horizontal='center', vertical='center'):
-            cell.font = Font(bold=bold, size=size)
-            cell.alignment = Alignment(horizontal=horizontal, vertical=vertical)
-
-        def cell_stoppage_type(row, wtg, stoppage_type, stoppage_time):
-            random_number = random.randint(2, 4)
-            if stoppage_type not in ['Owner or Utility Requested Stop',
-                                     'Visit/Inspection/Training Stop by Owner or Utility']:
-                daily_report_sheet[
-                    f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h, {random_number} Engineers."
-            else:
-                daily_report_sheet[f'C{row}'] = f"{wtg} {stoppage_type} ,{round(stoppage_time / 60, 2)}h."
-            format_cell(daily_report_sheet[f'C{row}'], horizontal='left')
-
-        def cell_resume_power(row, wtg):
-            daily_report_sheet[f'C{row}'] = f"{wtg} resume power generation"
-            format_cell(daily_report_sheet[f'C{row}'], horizontal='left')
-
-        def process_excel_data(file_path):
-            workbook = openpyxl.load_workbook(file_path)
-            sheet = workbook.active
-
-            data = []
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                data.append(row)
-
-            grouped_data = {}
-            for row in data:
-                event_type = row[4]  # Assuming event type is in column E
-                if event_type not in grouped_data:
-                    grouped_data[event_type] = []
-                grouped_data[event_type].append(row[0])  # Assuming identifier is in column A
-
-            output_list = []
-            for event_type, identifiers in grouped_data.items():
-                output_string = f"{', '.join(identifiers)} - {event_type}"
-                output_list.append(output_string)
-
-            return output_list
-
-        # Iterate over each WTG number
-        for wtg in wtg_number:
-            # File path for the current WTG
-            file_path = os.path.join(SUB_FILES_DIR,f'{wtg}_rows.xlsx')
-            book = openpyxl.load_workbook(file_path)
-            sheet = book.active
-
-            start_dates = []
-            end_dates = []
-            stoppage_summary = {}
-            power = 0
-
-            # Iterate through the rows to extract the dates and calculate total power loss
-            for row in sheet.iter_rows(min_row=sheet.min_row, values_only=True):  # Start from row 2 to skip the header
-                start_date = row[1] if len(row) > 1 else None  # Column B
-                end_date = row[2] if len(row) > 2 else None  # Column C
-                power = row[7] if len(row) > 7 else None  # Column H
-                stoppage_time = row[3] if len(row) > 3 else 0  # Column D
-                stoppage_type = row[4] if len(row) > 4 else ''  # Column E
-
-                if isinstance(start_date, datetime):
-                    start_dates.append(start_date)
-                if isinstance(end_date, datetime):
-                    end_dates.append(end_date)
-                if isinstance(power, (int, float)):  # Ensure power_loss is numeric
-                    total_power_loss += power
-
-                # Accumulate stoppage times by type
-                if isinstance(stoppage_time, (int, float)):
-                    if stoppage_type in stoppage_summary:
-                        stoppage_summary[stoppage_type] += stoppage_time
-                    else:
-                        stoppage_summary[stoppage_type] = stoppage_time
-
-                # Accumulate stoppage times
-                if isinstance(stoppage_time, (int, float)):
-                    if 'Fault stop' in stoppage_type:
-                        inexcusable_stoppages_hours += stoppage_time
-                        inexcusable_stoppages_power += power
-                    else:
-                        planned_maintenance_hours += stoppage_time
-                        planned_maintenance_power += power
-
-            # Calculate the minimum start date and maximum end date
-            min_start_date = min(start_dates) if start_dates else None
-            max_end_date = max(end_dates) if end_dates else None
-
-            # Determine the maximum stoppage time excluding 'Fault stop'
-            max_stoppage_type = None
-            max_stoppage_time = 0
-            fault_stop_time = stoppage_summary.get('Fault stop', 0)
-
-            if stoppage_summary:
-                max_stoppage_type = max(
-                    (key for key in stoppage_summary if key != 'Fault stop'),
-                    key=lambda k: stoppage_summary[k],
-                    default=None
-                )
-                if max_stoppage_type:
-                    max_stoppage_time = stoppage_summary[max_stoppage_type]
-
-            # Write to daily report
-            if min_start_date:
-                daily_report_sheet[f'B{start_row}'] = min_start_date.strftime("%H:%M")
-                format_cell(daily_report_sheet[f'B{start_row}'])
-
-            # Include 'Fault stop' and the next most significant stoppage type
-            if fault_stop_time > 0:
-                cell_stoppage_type(start_row, wtg, 'Fault stop', fault_stop_time)
-                start_row += 1
-                if max_stoppage_type:
-                    cell_stoppage_type(start_row, wtg, max_stoppage_type, max_stoppage_time)
-                    start_row += 1
-            elif max_stoppage_type:
-                cell_stoppage_type(start_row, wtg, max_stoppage_type, max_stoppage_time)
-                start_row += 1
-
-            if max_end_date:
-                daily_report_sheet[f'B{start_row}'] = max_end_date.strftime("%H:%M")
-                format_cell(daily_report_sheet[f'B{start_row}'])
-            cell_resume_power(start_row, wtg)
-            start_row += 1
-            book.close()
-
-        inexcusable_stoppages_hours /= 60
-        planned_maintenance_hours /= 60
-
-        total_power_loss = round(total_power_loss / 1000, 2)
-        inexcusable_stoppages_power = round(inexcusable_stoppages_power / 1000, 2)
-        planned_maintenance_power = round(planned_maintenance_power / 1000, 2)
-
-        inexcusable_stoppages_hours = round(inexcusable_stoppages_hours, 1)
-        planned_maintenance_hours = round(planned_maintenance_hours, 1)
-
-        results = process_excel_data(filePath)
-        str = ''
-        for result in results:
-            str += f'{result} \n'
-
-        if os.access(daily_report_path, os.W_OK):
-            daily_report_sheet['H17'] = str
-
-            daily_report_sheet['G17'] = total_power_loss
-            if inexcusable_stoppages_power != 0:
-                daily_report_sheet['E17'] = f'{inexcusable_stoppages_hours} / {inexcusable_stoppages_power}'
-            else:
-                daily_report_sheet['E17'] = inexcusable_stoppages_hours
-            daily_report_sheet['F17'] = f'{planned_maintenance_hours} / {planned_maintenance_power}'
-
-            daily_report_book.save(daily_report_path)
-
-        # Send result file and edited
-        await message.answer("Sending you the Daily report document...")
-        file_name = 'SEPCOIII Zarafshan Wind Power Project O&M Daily Report.xlsx'
-        file_path = os.path.join(RESULT_FILE_DIR, file_name)
-
-        # Check if the file exists
-        if os.path.exists(file_path):
-            try:
-                # Send the file to the user
-                await bot.send_document(message.chat.id, types.InputFile(file_path))
-            except Exception as e:
-                await message.answer("There was an error sending the file. Please try again later.")
-        else:
-            await message.answer("The requested file does not exist.")
-
-        # Optionally reset the state after processing
-        await state.finish()
-
-#Clean all project files except original file
-
-        # Define the folder containing the files
         Folder_path = [
-            SUB_FILES_DIR,
             RESULT_FILE_DIR,
             USER_DOCUMENT_DIR,
             EDITED_USER_FILE_DIR
@@ -393,7 +341,6 @@ async def handle_document(message: types.Message, state: FSMContext):
                 for file_name in os.listdir(folder_path):
                     # Construct the full file path
                     file_path = os.path.join(folder_path, file_name)
-
                     # Check if it's a file (not a directory)
                     if os.path.isfile(file_path):
                         try:
