@@ -98,8 +98,10 @@ async def handle_document(message: types.Message, state: FSMContext):
 
         # Read the file
         df = pd.read_excel(file_path)
-
+        df['Starting time'] = pd.to_datetime(df['Starting time'], errors='coerce')
         df['Starting time'] = df['Starting time'].dt.strftime('%H:%M')
+
+        df['End Time'] = pd.to_datetime(df['End Time'], errors='coerce')
         df['End Time'] = df['End Time'].dt.strftime('%H:%M')
         data_list = df.values.tolist()
 
